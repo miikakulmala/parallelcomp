@@ -49,6 +49,7 @@ sobel3x3(
     const uint8_t *restrict in, size_t width, size_t height,
     int16_t *restrict output_x, int16_t *restrict output_y) {
     // LOOP 1.1
+    #pragma omp parallel for collapse(2)
     for (size_t y = 0; y < height; y++) {
         // LOOP 1.2
         for (size_t x = 0; x < width; x++) {
@@ -79,6 +80,7 @@ phaseAndMagnitude(
     size_t height, uint8_t *restrict phase_out,
     uint16_t *restrict magnitude_out) {
     // LOOP 2.1
+    #pragma omp parallel for collapse(2)
     for (size_t y = 0; y < height; y++) {
         // LOOP 2.2
         for (size_t x = 0; x < width; x++) {
@@ -110,6 +112,7 @@ nonMaxSuppression(
     size_t width, size_t height, int16_t threshold_lower,
     uint16_t threshold_upper, uint8_t *restrict out) {
     // LOOP 3.1
+    #pragma omp parallel for collapse(2)
     for (size_t y = 0; y < height; y++) {
         // LOOP 3.2
         for (size_t x = 0; x < width; x++) {
@@ -246,6 +249,7 @@ edgeTracing(uint8_t *restrict image, size_t width, size_t height) {
     // Clear all remaining MAYBE pixels to NO, these were not reachable from
     // any YES pixels
     // LOOP 4.5
+    #pragma omp paraller for collapse(2)
     for (int y = 0; y < height; y++) {
         // LOOP 4.6
         for (int x = 0; x < width; x++) {

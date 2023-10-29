@@ -8,6 +8,9 @@ opt_vec_show:
 	gcc -o canny util.c canny.c -lm -O2 -ftree-vectorize -mavx2 -fopt-info-vec
 
 opt_vec_mrel:
+	gcc -o canny util.c canny.c -lm -O2 -ftree-vectorize -mavx2 -fopt-info-vec-all -ffast-math
+
+fastest:
 	gcc -o canny util.c canny.c -lm -O2 -ftree-vectorize -mavx2 -fopt-info-vec -ffast-math
 
 opt_vec_mrel_openmp:
