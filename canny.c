@@ -249,7 +249,7 @@ edgeTracing(uint8_t *restrict image, size_t width, size_t height) {
     // Clear all remaining MAYBE pixels to NO, these were not reachable from
     // any YES pixels
     // LOOP 4.5
-    #pragma omp paraller for collapse(2)
+    #pragma omp parallel for collapse(2)
     for (int y = 0; y < height; y++) {
         // LOOP 4.6
         for (int x = 0; x < width; x++) {
