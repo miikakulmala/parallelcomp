@@ -52,7 +52,13 @@ int main() {
 
     // Use this to check the output of each API call
     cl_int status;  
-     
+    // Use this to check the output profiling info
+    cl_int profiling_info;
+    // Used to capture event for timing
+    cl_event timing_event;
+    // Outputs for timing event
+    cl_ulong time_start, time_end, execute_time;
+
     // Retrieve the number of platforms
     cl_uint numPlatforms = 0;
     status = clGetPlatformIDs(0, NULL, &numPlatforms);
@@ -84,9 +90,9 @@ int main() {
     context = clCreateContext(NULL, numDevices, devices, NULL, 
         NULL, &status);
 
-    // Create a command queue and associate it with the device 
+    // Create a command queue with profiling enabled and associate it with the device
     cl_command_queue cmdQueue;
-    cmdQueue = clCreateCommandQueue(context, devices[0], 0, 
+    cmdQueue = clCreateCommandQueue(context, devices[0], CL_QUEUE_PROFILING_ENABLE, 
         &status);
 
     // Create a buffer object that will contain the data 
@@ -141,7 +147,16 @@ int main() {
 
     // Execute the kernel for execution
     status = clEnqueueNDRangeKernel(cmdQueue, kernel, 1, NULL, 
-        globalWorkSize, NULL, 0, NULL, NULL);
+        globalWorkSize, NULL, 0, NULL, &timing_event);
+
+    // Get start time of command
+    profiling_info = clGetEventProfilingInfo(timing_event, CL_PROFILING_COMMAND_START, sizeof(time_start), &time_start, NULL);
+    // Get end time of command
+    profiling_info = clGetEventProfilingInfo(timing_event, CL_PROFILING_COMMAND_START, sizeof(time_end), &time_end, NULL);
+
+    //execute_time = time_end - time_start;
+
+    //printf("Time taken for clEnqueueNDRangeKernel: %d", (int)execute_time);
 
     // Read the device output buffer to the host output array
     clEnqueueReadBuffer(cmdQueue, bufC, CL_TRUE, 0, 
