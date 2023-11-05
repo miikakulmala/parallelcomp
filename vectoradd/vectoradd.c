@@ -24,6 +24,22 @@ const char* programSource =
 "}                                                   \n"
 ;
 
+void print_command_time(cl_event timing_event, char* command_name) {
+
+    cl_ulong time_start, time_end;
+    double execute_time;
+    // Get start time of command
+    clGetEventProfilingInfo(timing_event, CL_PROFILING_COMMAND_START, sizeof(time_start), &time_start, NULL);
+    // Get end time of command1
+    clGetEventProfilingInfo(timing_event, CL_PROFILING_COMMAND_END, sizeof(time_end), &time_end, NULL);
+
+    // Time resolution for my device is 1000ns = 1 us. Convert from us to ms to display
+    execute_time = (time_end - time_start)/1000.0;
+
+    printf("Time taken for %s: %f ms\n", command_name, execute_time);
+}
+
+
 int main() {
     // This code executes on the OpenCL host
     
@@ -51,13 +67,9 @@ int main() {
     }
 
     // Use this to check the output of each API call
-    cl_int status;  
-    // Use this to check the output profiling info
-    cl_int profiling_info;
+    cl_int status;
     // Used to capture event for timing
     cl_event timing_event;
-    // Outputs for timing event
-    cl_ulong time_start, time_end, execute_time;
 
     // Retrieve the number of platforms
     cl_uint numPlatforms = 0;
@@ -85,6 +97,12 @@ int main() {
     status = clGetDeviceIDs(platforms[0], CL_DEVICE_TYPE_ALL,        
         numDevices, devices, NULL);
 
+    size_t time_res;
+    // Get time resolution for profiling
+    clGetDeviceInfo(devices[0], CL_DEVICE_PROFILING_TIMER_RESOLUTION, sizeof(time_res), &time_res, NULL);
+
+    printf("Time resolution of device in ns: %lu \n", time_res);
+
     // Create a context and associate it with the devices
     cl_context context;
     context = clCreateContext(NULL, numDevices, devices, NULL, 
@@ -92,7 +110,7 @@ int main() {
 
     // Create a command queue with profiling enabled and associate it with the device
     cl_command_queue cmdQueue;
-    cmdQueue = clCreateCommandQueue(context, devices[0], CL_QUEUE_PROFILING_ENABLE, 
+    cmdQueue = clCreateCommandQueue(context, devices[0], CL_QUEUE_PROFILING_ENABLE,
         &status);
 
     // Create a buffer object that will contain the data 
@@ -114,11 +132,21 @@ int main() {
     
     // Write input array A to the device buffer bufferA
     status = clEnqueueWriteBuffer(cmdQueue, bufA, CL_FALSE, 
-        0, datasize, A, 0, NULL, NULL);
+        0, datasize, A, 0, NULL, &timing_event);
     
+    // Wait for work items to finish
+    clFinish(cmdQueue);
+
+    print_command_time(timing_event, "clEnqueueWriteBuffer(A)");
+
     // Write input array B to the device buffer bufferB
     status = clEnqueueWriteBuffer(cmdQueue, bufB, CL_FALSE, 
-        0, datasize, B, 0, NULL, NULL);
+        0, datasize, B, 0, NULL, &timing_event);
+
+    // Wait for work items to finish
+    clFinish(cmdQueue);
+
+    print_command_time(timing_event, "clEnqueueWriteBuffer(B)");
 
     // Create a program with source code
     cl_program program = clCreateProgramWithSource(context, 1, 
@@ -148,19 +176,20 @@ int main() {
     // Execute the kernel for execution
     status = clEnqueueNDRangeKernel(cmdQueue, kernel, 1, NULL, 
         globalWorkSize, NULL, 0, NULL, &timing_event);
+    
+    // Wait for work items to finish
+    clFinish(cmdQueue);
 
-    // Get start time of command
-    profiling_info = clGetEventProfilingInfo(timing_event, CL_PROFILING_COMMAND_START, sizeof(time_start), &time_start, NULL);
-    // Get end time of command
-    profiling_info = clGetEventProfilingInfo(timing_event, CL_PROFILING_COMMAND_START, sizeof(time_end), &time_end, NULL);
-
-    //execute_time = time_end - time_start;
-
-    //printf("Time taken for clEnqueueNDRangeKernel: %d", (int)execute_time);
+    print_command_time(timing_event, "clEnqueueNDRangeKernel");
 
     // Read the device output buffer to the host output array
     clEnqueueReadBuffer(cmdQueue, bufC, CL_TRUE, 0, 
-        datasize, C, 0, NULL, NULL);
+        datasize, C, 0, NULL, &timing_event);
+
+    // Wait for work items to finish
+    clFinish(cmdQueue);
+
+    print_command_time(timing_event, "clEnqueueReadBuffeR(C)");
 
     // Verify the output
     int result = 1;

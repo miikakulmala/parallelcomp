@@ -1,3 +1,15 @@
 
 1.
 	Output is correct
+	
+2.
+	// Write buffers
+	Time taken for clEnqueueWriteBuffer(A): 1.024000 ms
+	Time taken for clEnqueueWriteBuffer(B): 1.568000 ms
+
+	// Kernel execution
+	Time taken for clEnqueueNDRangeKernel: 9.216000 ms
+	
+	// Read buffer
+	Time taken for clEnqueueReadBuffeR(C): 1.504000 ms
+
