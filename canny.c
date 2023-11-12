@@ -50,6 +50,8 @@ const coord_t neighbour_offsets[8] = {
 
 // ## You may add your own variables here ##
 
+OpenCLObjects *ocl;
+
 // Utility function to convert 2d index with offset to linear index
 // Uses clamp-to-edge out-of-bounds handling
 size_t
@@ -331,7 +333,7 @@ cannyEdgeDetection(
 // Needed only in Part 2 for OpenCL initialization
 void
 init(size_t width, size_t height, uint16_t threshold_lower,
-    uint16_t threshold_upper, OpenCLObjects *ocl) {
+    uint16_t threshold_upper) {
 
     size_t image_size = width * height;
 
@@ -433,7 +435,7 @@ init(size_t width, size_t height, uint16_t threshold_lower,
 
 }
 
-void destroy(OpenCLObjects *ocl) {
+void destroy() {
 
     // Free OpenCL resources
     clReleaseKernel(ocl->kernel_nonMax);
@@ -486,8 +488,6 @@ main(int argc, char **argv) {
     if (argc > 2) {
         benchmarking_iterations = atoi(argv[2]);
     }
-
-    OpenCLObjects ocl;
 
     char *input_image_path = "";
     char *output_image_path = "";
@@ -549,7 +549,7 @@ main(int argc, char **argv) {
     if (mode == VIDEO_MODE) {
         width = 3840;
         height = 2160;
-        init(width, height, threshold_lower, threshold_upper, &ocl);
+        init(width, height, threshold_lower, threshold_upper);
 
         uint8_t *output_image = malloc(width * height);
         assert(output_image);
@@ -598,7 +598,7 @@ main(int argc, char **argv) {
             printf("Read failed\n");
             return -1;
         }
-        init(width, height, threshold_lower, threshold_upper, &ocl);
+        init(width, height, threshold_lower, threshold_upper);
 
         uint8_t *output_image = malloc(width * height);
         assert(output_image);
@@ -658,6 +658,6 @@ main(int argc, char **argv) {
             printf("There were failing runs\n");
         }
     }
-    destroy(&ocl);
+    destroy();
     return 0;
 }
