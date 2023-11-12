@@ -12,12 +12,31 @@ VERSION 23.0 - Created
 #include <stdlib.h>
 #include <string.h>
 
+// OpenCL includes
+#include <CL/cl.h>
+#include "opencl_util.h"
+
 #include "util.h"
 
 // Is used to find out frame times
 int previousFinishTime = 0;
 unsigned int frameNumber = 0;
 unsigned int seed = 0;
+
+typedef struct {
+    cl_context context;
+    cl_program program;
+    cl_command_queue cmdQueue;
+    cl_mem buf_input;
+    cl_mem buf_sobel_x;
+    cl_mem buf_sobel_y;
+    cl_mem buf_phase;
+    cl_mem buf_magnitude;
+    cl_mem buf_output;
+    cl_kernel kernel_sobel;
+    cl_kernel kernel_PnM;
+    cl_kernel kernel_nonMax;
+} OpenCLObjects;
 
 typedef struct {
     uint16_t x;
@@ -49,7 +68,6 @@ sobel3x3(
     const uint8_t *restrict in, size_t width, size_t height,
     int16_t *restrict output_x, int16_t *restrict output_y) {
     // LOOP 1.1
-    #pragma omp parallel for collapse(2)
     for (size_t y = 0; y < height; y++) {
         // LOOP 1.2
         for (size_t x = 0; x < width; x++) {
@@ -265,6 +283,7 @@ cannyEdgeDetection(
     uint8_t *restrict input, size_t width, size_t height,
     uint16_t threshold_lower, uint16_t threshold_upper,
     uint8_t *restrict output, double *restrict runtimes) {
+
     size_t image_size = width * height;
 
     // Allocate arrays for intermediate results
@@ -311,12 +330,128 @@ cannyEdgeDetection(
 
 // Needed only in Part 2 for OpenCL initialization
 void
-init(
-    size_t width, size_t height, uint16_t threshold_lower,
-    uint16_t threshold_upper) {}
+init(size_t width, size_t height, uint16_t threshold_lower,
+    uint16_t threshold_upper, OpenCLObjects *ocl) {
 
-void
-destroy() {}
+    size_t image_size = width * height;
+
+    // Use this to check the output of each API call
+    cl_int status;
+    // Used to capture event for timing
+    cl_event timing_event;
+
+    // Retrieve the number of platforms
+    cl_uint numPlatforms = 0;
+    status = clGetPlatformIDs(0, NULL, &numPlatforms);
+ 
+    // Allocate enough space for each platform
+    cl_platform_id *platforms = NULL;
+    platforms = (cl_platform_id*)malloc(
+        numPlatforms*sizeof(cl_platform_id));
+ 
+    // Fill in the platforms
+    status = clGetPlatformIDs(numPlatforms, platforms, NULL);
+
+    // Retrieve the number of devices
+    cl_uint numDevices = 0;
+    status = clGetDeviceIDs(platforms[0], CL_DEVICE_TYPE_ALL, 0, 
+        NULL, &numDevices);
+
+    // Allocate enough space for each device
+    cl_device_id *devices;
+    devices = (cl_device_id*)malloc(
+        numDevices*sizeof(cl_device_id));
+
+    // Fill in the devices 
+    status = clGetDeviceIDs(platforms[0], CL_DEVICE_TYPE_ALL,        
+        numDevices, devices, NULL);
+
+    size_t time_res;
+    // Get time resolution for profiling
+    clGetDeviceInfo(devices[0], CL_DEVICE_PROFILING_TIMER_RESOLUTION, sizeof(time_res), &time_res, NULL);
+
+    printf("Time resolution of device in ns: %lu \n", time_res);
+
+    // Create a context and associate it with the devices
+    ocl->context= clCreateContext(NULL, numDevices, devices, NULL, 
+        NULL, &status);
+
+    // Create a command queue with profiling enabled and associate it with the device
+    ocl->cmdQueue = clCreateCommandQueue(ocl->context, devices[0], CL_QUEUE_PROFILING_ENABLE,
+        &status);
+
+    ocl->buf_input = clCreateBuffer(ocl->context, CL_MEM_READ_ONLY, image_size * sizeof(uint8_t), NULL, &status);
+
+    ocl->buf_sobel_x = clCreateBuffer(ocl->context, CL_MEM_READ_ONLY, image_size * sizeof(int16_t), NULL, &status);
+
+    ocl->buf_sobel_y = clCreateBuffer(ocl->context, CL_MEM_READ_ONLY, image_size * sizeof(int16_t), NULL, &status);
+
+    ocl->buf_phase = clCreateBuffer(ocl->context, CL_MEM_READ_ONLY, image_size * sizeof(uint8_t), NULL, &status);
+
+    ocl->buf_magnitude = clCreateBuffer(ocl->context, CL_MEM_READ_ONLY, image_size * sizeof(int16_t), NULL, &status);
+
+    ocl->buf_output = clCreateBuffer(ocl->context, CL_MEM_READ_ONLY, image_size * sizeof(uint8_t), NULL, &status);
+
+    const char* source = read_source("canny.cl");
+
+    // Create a program with source code
+    ocl->program = clCreateProgramWithSource(ocl->context, 1, 
+        (const char**)&source, NULL, &status);
+
+    // Build (compile) the program for the device
+    status = clBuildProgram(ocl->program, numDevices, devices, 
+        NULL, NULL, NULL);
+
+    // Create the vector addition kernel
+    ocl->kernel_sobel = clCreateKernel(ocl->program, "sobel", &status);
+
+    ocl->kernel_PnM = clCreateKernel(ocl->program, "PnM", &status);
+
+    ocl->kernel_nonMax = clCreateKernel(ocl->program, "nonMax", &status);
+
+    // Associate the input and output buffers with the kernel
+    status = clSetKernelArg(ocl->kernel_sobel, 0, sizeof(cl_mem), &ocl->buf_input);
+    status = clSetKernelArg(ocl->kernel_sobel, 1, sizeof(cl_mem), &ocl->buf_sobel_x);
+    status = clSetKernelArg(ocl->kernel_sobel, 2, sizeof(cl_mem), &ocl->buf_sobel_y);
+    status = clSetKernelArg(ocl->kernel_sobel, 3, sizeof(size_t), &width);
+    status = clSetKernelArg(ocl->kernel_sobel, 4, sizeof(size_t), &height);
+
+    status = clSetKernelArg(ocl->kernel_PnM, 0, sizeof(cl_mem), &ocl->buf_sobel_x);
+    status = clSetKernelArg(ocl->kernel_PnM, 1, sizeof(cl_mem), &ocl->buf_sobel_y);
+    status = clSetKernelArg(ocl->kernel_PnM, 2, sizeof(cl_mem), &ocl->buf_phase);
+    status = clSetKernelArg(ocl->kernel_PnM, 3, sizeof(cl_mem), &ocl->buf_magnitude);
+    status = clSetKernelArg(ocl->kernel_PnM, 4, sizeof(size_t), &width);
+    status = clSetKernelArg(ocl->kernel_PnM, 5, sizeof(size_t), &height);
+
+    status = clSetKernelArg(ocl->kernel_nonMax, 0, sizeof(cl_mem), &ocl->buf_phase);
+    status = clSetKernelArg(ocl->kernel_nonMax, 1, sizeof(cl_mem), &ocl->buf_magnitude);
+    status = clSetKernelArg(ocl->kernel_nonMax, 2, sizeof(cl_mem), &ocl->buf_output);
+    status = clSetKernelArg(ocl->kernel_nonMax, 3, sizeof(size_t), &width);
+    status = clSetKernelArg(ocl->kernel_nonMax, 4, sizeof(size_t), &height);
+    status = clSetKernelArg(ocl->kernel_nonMax, 5, sizeof(uint16_t), &threshold_lower);
+    status = clSetKernelArg(ocl->kernel_nonMax, 6, sizeof(uint16_t), &threshold_upper);
+
+}
+
+void destroy(OpenCLObjects *ocl) {
+
+    // Free OpenCL resources
+    clReleaseKernel(ocl->kernel_nonMax);
+    clReleaseKernel(ocl->kernel_PnM);
+    clReleaseKernel(ocl->kernel_sobel);
+
+    clReleaseMemObject(ocl->buf_input);
+    clReleaseMemObject(ocl->buf_sobel_x);
+    clReleaseMemObject(ocl->buf_sobel_y);
+    clReleaseMemObject(ocl->buf_phase);
+    clReleaseMemObject(ocl->buf_magnitude);
+    clReleaseMemObject(ocl->buf_output);
+
+    clReleaseProgram(ocl->program);
+    clReleaseCommandQueue(ocl->cmdQueue);
+    clReleaseContext(ocl->context);
+
+}
 
 ////////////////////////////////////////////////
 // ¤¤ DO NOT EDIT ANYTHING AFTER THIS LINE ¤¤ //
@@ -351,6 +486,8 @@ main(int argc, char **argv) {
     if (argc > 2) {
         benchmarking_iterations = atoi(argv[2]);
     }
+
+    OpenCLObjects ocl;
 
     char *input_image_path = "";
     char *output_image_path = "";
@@ -412,7 +549,7 @@ main(int argc, char **argv) {
     if (mode == VIDEO_MODE) {
         width = 3840;
         height = 2160;
-        init(width, height, threshold_lower, threshold_upper);
+        init(width, height, threshold_lower, threshold_upper, &ocl);
 
         uint8_t *output_image = malloc(width * height);
         assert(output_image);
@@ -461,7 +598,7 @@ main(int argc, char **argv) {
             printf("Read failed\n");
             return -1;
         }
-        init(width, height, threshold_lower, threshold_upper);
+        init(width, height, threshold_lower, threshold_upper, &ocl);
 
         uint8_t *output_image = malloc(width * height);
         assert(output_image);
@@ -521,6 +658,6 @@ main(int argc, char **argv) {
             printf("There were failing runs\n");
         }
     }
-    destroy();
+    destroy(&ocl);
     return 0;
 }
