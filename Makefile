@@ -17,7 +17,7 @@ opt_vec_mrel_openmp:
 	gcc -o canny util.c canny.c -lm -O2 -ftree-vectorize -mavx2 -fopt-info-vec -ffast-math -fopenmp
 
 support_opencl:
-	gcc -o canny util.c opencl_util.c canny.c -lm -O2 -ftree-vectorize -mavx2 -fopt-info-vec -ffast-math -fopenmp -lOpenCL
+	gcc -o canny util.c opencl_util.c canny.c -lm -O2 -Wall -ftree-vectorize -mavx2 -fopt-info-vec -ffast-math -fopenmp -lOpenCL
 
 clean:
 	@rm -f *.o

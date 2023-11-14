@@ -302,6 +302,50 @@ cannyEdgeDetection(
     assert(magnitude);
 
     uint64_t times[5];
+
+    printf("BEFORE EXE");
+
+    // OPENCL EXECUTION
+    cl_int status;
+    cl_event timing_event;
+    size_t globalWorkSize[2];
+
+    globalWorkSize[0] = width;
+    globalWorkSize[1] = height;
+
+    size_t datasize = sizeof(uint8_t) * width * height;
+
+    // Write input array A to the device buffer bufferA
+    status = clEnqueueWriteBuffer(ocl->cmdQueue, ocl->buf_input, CL_FALSE, 
+        0, datasize, input, 0, NULL, &timing_event);
+
+    printf("READ INPUT");
+
+    // RUN KERNELS
+    status = clEnqueueNDRangeKernel(ocl->cmdQueue, ocl->kernel_sobel, 2, NULL,
+        globalWorkSize, NULL, 0, NULL, &timing_event);
+
+    status = clEnqueueNDRangeKernel(ocl->cmdQueue, ocl->kernel_PnM, 2, NULL,
+        globalWorkSize, NULL, 0, NULL, &timing_event);
+
+    status = clEnqueueNDRangeKernel(ocl->cmdQueue, ocl->kernel_nonMax, 2, NULL,
+        globalWorkSize, NULL, 0, NULL, &timing_event);
+
+    printf("AFTER EXE");
+
+    // Read the device output buffer to the host output array
+    clEnqueueReadBuffer(ocl->cmdQueue, ocl->buf_output, CL_TRUE, 0, 
+        datasize, output, 0, NULL, &timing_event);
+
+    // Wait for work items to finish
+    clFinish(ocl->cmdQueue);
+
+    printf("OPENCL DONE");
+
+    // OPENCL DONE
+
+
+
     // Canny edge detection algorithm consists of the following functions:
     times[0] = gettimemono_ns();
     sobel3x3(input, width, height, sobel_x, sobel_y);
@@ -339,8 +383,8 @@ init(size_t width, size_t height, uint16_t threshold_lower,
 
     // Use this to check the output of each API call
     cl_int status;
-    // Used to capture event for timing
-    cl_event timing_event;
+
+    printf("in init");
 
     // Retrieve the number of platforms
     cl_uint numPlatforms = 0;
@@ -354,6 +398,8 @@ init(size_t width, size_t height, uint16_t threshold_lower,
     // Fill in the platforms
     status = clGetPlatformIDs(numPlatforms, platforms, NULL);
 
+    printf("%s", clErrorString(status));
+
     // Retrieve the number of devices
     cl_uint numDevices = 0;
     status = clGetDeviceIDs(platforms[0], CL_DEVICE_TYPE_ALL, 0, 
@@ -364,23 +410,33 @@ init(size_t width, size_t height, uint16_t threshold_lower,
     devices = (cl_device_id*)malloc(
         numDevices*sizeof(cl_device_id));
 
+    printf("before fill device");
+
     // Fill in the devices 
     status = clGetDeviceIDs(platforms[0], CL_DEVICE_TYPE_ALL,        
         numDevices, devices, NULL);
 
-    size_t time_res;
+    //size_t time_res;
     // Get time resolution for profiling
-    clGetDeviceInfo(devices[0], CL_DEVICE_PROFILING_TIMER_RESOLUTION, sizeof(time_res), &time_res, NULL);
+    //clGetDeviceInfo(devices[0], CL_DEVICE_PROFILING_TIMER_RESOLUTION, sizeof(time_res), &time_res, NULL);
 
-    printf("Time resolution of device in ns: %lu \n", time_res);
+    printf("before timeres");
+
+    //printf("Time resolution of device in ns: %lu \n", time_res);
+
+    printf("before context");
 
     // Create a context and associate it with the devices
     ocl->context= clCreateContext(NULL, numDevices, devices, NULL, 
         NULL, &status);
 
+    printf("after context");
+
     // Create a command queue with profiling enabled and associate it with the device
     ocl->cmdQueue = clCreateCommandQueue(ocl->context, devices[0], CL_QUEUE_PROFILING_ENABLE,
         &status);
+
+    printf("after cmdque");
 
     ocl->buf_input = clCreateBuffer(ocl->context, CL_MEM_READ_ONLY, image_size * sizeof(uint8_t), NULL, &status);
 
@@ -393,6 +449,8 @@ init(size_t width, size_t height, uint16_t threshold_lower,
     ocl->buf_magnitude = clCreateBuffer(ocl->context, CL_MEM_READ_ONLY, image_size * sizeof(int16_t), NULL, &status);
 
     ocl->buf_output = clCreateBuffer(ocl->context, CL_MEM_READ_ONLY, image_size * sizeof(uint8_t), NULL, &status);
+
+    printf("before reads");
 
     const char* source = read_source("canny.cl");
 
@@ -410,6 +468,8 @@ init(size_t width, size_t height, uint16_t threshold_lower,
     ocl->kernel_PnM = clCreateKernel(ocl->program, "PnM", &status);
 
     ocl->kernel_nonMax = clCreateKernel(ocl->program, "nonMax", &status);
+
+    printf("before kernel args");
 
     // Associate the input and output buffers with the kernel
     status = clSetKernelArg(ocl->kernel_sobel, 0, sizeof(cl_mem), &ocl->buf_input);
@@ -433,6 +493,11 @@ init(size_t width, size_t height, uint16_t threshold_lower,
     status = clSetKernelArg(ocl->kernel_nonMax, 5, sizeof(uint16_t), &threshold_lower);
     status = clSetKernelArg(ocl->kernel_nonMax, 6, sizeof(uint16_t), &threshold_upper);
 
+    printf("before ws");
+
+
+
+    printf("INIT DONE");
 }
 
 void destroy() {
