@@ -32,8 +32,8 @@ __kernel void nonMax(__global int8* input_phase,
                     int threshold_lower,
                     int threshold_upper) {
 
-   const int x = get_global_id(0);
-   const int y = get_global_id(1);
+   int x = get_global_id(0);
+   int y = get_global_id(1);
 
    output[y*width + x] = y;
 

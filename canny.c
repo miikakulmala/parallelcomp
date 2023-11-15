@@ -306,6 +306,7 @@ cannyEdgeDetection(
 
     // OPENCL EXECUTION
     cl_int status;
+    double execute_time;
     cl_event timing_event;
     size_t globalWorkSize[2];
 
@@ -317,32 +318,61 @@ cannyEdgeDetection(
     // Write input array A to the device buffer bufferA
     status = clEnqueueWriteBuffer(ocl->cmdQueue, ocl->buf_input, CL_FALSE, 
         0, datasize, input, 0, NULL, &timing_event);
-
     printf("Write input to buffer status: %s\n", clErrorString(status));
 
+    execute_time = getStartEndTime(timing_event)/1000.0;
+    // Time resolution for my device is 1000ns = 1 us. Convert from us to ms to display
+    printf("Time taken for writing input buffer to device: %f ms\n", execute_time);
+
+
     // RUN KERNELS
-    //status = clEnqueueNDRangeKernel(ocl->cmdQueue, ocl->kernel_sobel, 2, NULL,
-    //    globalWorkSize, NULL, 0, NULL, &timing_event);
+    ///////////////////////// Sobel /////////////////////////
+    status = clEnqueueNDRangeKernel(ocl->cmdQueue, ocl->kernel_sobel, 2, NULL,
+        globalWorkSize, NULL, 0, NULL, &timing_event);
+    printf("sobel kernel status: %s\n", clErrorString(status));
 
-    //status = clEnqueueNDRangeKernel(ocl->cmdQueue, ocl->kernel_PnM, 2, NULL,
-    //    globalWorkSize, NULL, 0, NULL, &timing_event);
+    // Wait for work items to finish
+    clFinish(ocl->cmdQueue);
 
+    execute_time = getStartEndTime(timing_event)/1000.0;
+    // Time resolution for my device is 1000ns = 1 us. Convert from us to ms to display
+    printf("Time for executing sobel kernel: %f ms\n", execute_time);
+
+
+    ///////////////////////// Phase and magnitude /////////////////////////
+    status = clEnqueueNDRangeKernel(ocl->cmdQueue, ocl->kernel_PnM, 2, NULL,
+        globalWorkSize, NULL, 0, NULL, &timing_event);
+    printf("phaseAndMagnitude kernel status: %s\n", clErrorString(status));
+
+    // Wait for work items to finish
+    clFinish(ocl->cmdQueue);
+
+    execute_time = getStartEndTime(timing_event)/1000.0;
+    // Time resolution for my device is 1000ns = 1 us. Convert from us to ms to display
+    printf("Time for executing phaseAndMagnitude kernel: %f ms\n", execute_time);
+
+
+    ///////////////////////// NONMAX /////////////////////////
     status = clEnqueueNDRangeKernel(ocl->cmdQueue, ocl->kernel_nonMax, 2, NULL,
         globalWorkSize, NULL, 0, NULL, &timing_event);
-
     printf("nonMax kernel status: %s\n", clErrorString(status));
 
     // Wait for work items to finish
     clFinish(ocl->cmdQueue);
 
+    execute_time = getStartEndTime(timing_event)/1000.0;
+    // Time resolution for my device is 1000ns = 1 us. Convert from us to ms to display
+    printf("Time for executing nonMax kernel: %f ms\n", execute_time);
+
+
     // Read the device output buffer to the host output array
     status = clEnqueueReadBuffer(ocl->cmdQueue, ocl->buf_output, CL_TRUE, 0,
         datasize, output, 0, NULL, &timing_event);
-
     printf("Read output from buffer status: %s\n", clErrorString(status));
-
-    // Wait for work items to finish
-    clFinish(ocl->cmdQueue);
+    
+    execute_time = getStartEndTime(timing_event)/1000.0;
+    // Time resolution for my device is 1000ns = 1 us. Convert from us to ms to display
+    printf("Time taken for reading output buffer from device: %f ms\n", execute_time);
 
     // OPENCL DONE
 
@@ -390,7 +420,7 @@ init(size_t width, size_t height, uint16_t threshold_lower,
     cl_uint numPlatforms = 0;
     status = clGetPlatformIDs(0, NULL, &numPlatforms);
  
-    printf("%s\n", clErrorString(status));
+    printf("clGetPlatformIDs: %s\n", clErrorString(status));
 
     // Allocate enough space for each platform
     cl_platform_id *platforms = NULL;
@@ -400,14 +430,14 @@ init(size_t width, size_t height, uint16_t threshold_lower,
     // Fill in the platforms
     status = clGetPlatformIDs(numPlatforms, platforms, NULL);
 
-    printf("%s\n", clErrorString(status));
+    printf("clGetPlatformIDs: %s\n", clErrorString(status));
 
     // Retrieve the number of devices
     cl_uint numDevices = 0;
     status = clGetDeviceIDs(platforms[0], CL_DEVICE_TYPE_ALL, 0, 
         NULL, &numDevices);
 
-    printf("%s\n", clErrorString(status));
+    printf("clGetDeviceIDs: %s\n", clErrorString(status));
 
     // Allocate enough space for each device
     cl_device_id *devices;
@@ -418,7 +448,7 @@ init(size_t width, size_t height, uint16_t threshold_lower,
     status = clGetDeviceIDs(platforms[0], CL_DEVICE_TYPE_ALL,        
         numDevices, devices, NULL);
 
-    printf("%s\n", clErrorString(status));
+    printf("clGetDeviceIDs: %s\n", clErrorString(status));
 
     size_t time_res;
     // Get time resolution for profiling
@@ -430,27 +460,31 @@ init(size_t width, size_t height, uint16_t threshold_lower,
     ocl->context= clCreateContext(NULL, numDevices, devices, NULL, 
         NULL, &status);
 
-    printf("%s\n", clErrorString(status));
+    printf("clCreateContext: %s\n", clErrorString(status));
 
     // Create a command queue with profiling enabled and associate it with the device
     ocl->cmdQueue = clCreateCommandQueue(ocl->context, devices[0], CL_QUEUE_PROFILING_ENABLE,
         &status);
 
-    printf("%s\n", clErrorString(status));
+    printf("clCreateCommandQueue: %s\n", clErrorString(status));
 
     ocl->buf_input = clCreateBuffer(ocl->context, CL_MEM_READ_ONLY, image_size * sizeof(uint8_t), NULL, &status);
-
+    printf("clCreateBuffer: %s\n", clErrorString(status));
+    
     ocl->buf_sobel_x = clCreateBuffer(ocl->context, CL_MEM_READ_ONLY, image_size * sizeof(int16_t), NULL, &status);
+    printf("clCreateBuffer: %s\n", clErrorString(status));
 
     ocl->buf_sobel_y = clCreateBuffer(ocl->context, CL_MEM_READ_ONLY, image_size * sizeof(int16_t), NULL, &status);
+    printf("clCreateBuffer: %s\n", clErrorString(status));
 
     ocl->buf_phase = clCreateBuffer(ocl->context, CL_MEM_READ_ONLY, image_size * sizeof(uint8_t), NULL, &status);
-
+    printf("clCreateBuffer: %s\n", clErrorString(status));
+    
     ocl->buf_magnitude = clCreateBuffer(ocl->context, CL_MEM_READ_ONLY, image_size * sizeof(int16_t), NULL, &status);
+    printf("clCreateBuffer: %s\n", clErrorString(status));
 
     ocl->buf_output = clCreateBuffer(ocl->context, CL_MEM_READ_ONLY, image_size * sizeof(uint8_t), NULL, &status);
-
-    printf("%s\n", clErrorString(status));
+    printf("clCreateBuffer: %s\n", clErrorString(status));
 
     const char* source = read_source("canny.cl");
 
