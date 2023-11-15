@@ -1,66 +1,40 @@
-__kernel 
-void img_rotate(__global float* dest_data, 
-                __global float* src_data,    
-                           int  W,    
-                           int  H, 
-                         float  sinTheta, 
-                         float  cosTheta) { 
+__kernel void sobel(__global int8* input,
+                    __global int16* output_x,
+                    __global int16* output_y,
+                    int width, int height) {
 
-   //Work-item gets its index within index space
-   const int ix = get_global_id(0); 
-   const int iy = get_global_id(1);    
+   const int x = get_global_id(0); 
+   const int y = get_global_id(1);
 
-   //Calculate location of data to move into (ix,iy) 
-   //Output decomposition as mentioned
-   float x0 = W/2.0f;
-   float y0 = H/2.0f;
-
-   float xOff = ix - x0;
-   float yOff = iy - y0; 
-
-   int xpos = (int)(xOff*cosTheta + yOff*sinTheta + x0 );
-   int ypos = (int)(yOff*cosTheta - xOff*sinTheta + y0 ); 
-
-   // Bounds Checking 
-   if((xpos>=0) && (xpos< W) && (ypos>=0) && (ypos< H)) {
-
-      // Read (ix,iy) src_data and store at (xpos,ypos) in 
-      // dest_data
-      // In this case, because we rotating about the origin
-      // and there is no translation, we know that (xpos,ypos)  
-      // will be unique for each input (ix,iy) and so each 
-      // work-item can write its results independently
- 
-      dest_data[iy*W+ix] = src_data[ypos*W+xpos];    
-   }
-}
-
-__kernel void sobel(__global int8_t* input,
-                    __global int16_t* output_x,
-                    __global int16_t* output_y,
-                    size_t width, size_t height) {
-
-
+   output_x[y*width + x] = 255;
+   output_y[y*width + x] = 255;
 
 }
 
-__kernel void PnM(__global int16_t* input_x,
-                    __global int16_t* input_y,
-                    __global int8_t* output_phase,
-                    __global int16_t* output_magnitude,
-                    size_t width, size_t height) {
+__kernel void PnM(__global int16* input_x,
+                    __global int16* input_y,
+                    __global int8* output_phase,
+                    __global int16* output_magnitude,
+                    int width, int height) {
 
+   const int x = get_global_id(0); 
+   const int y = get_global_id(1);
 
+   output_phase[y*width + x] = 255;
+   output_magnitude[y*width + x] = 255;
 
 }
 
-__kernel void nonMax(__global int8_t* input_phase,
-                    __global int16_t* input_magnitude,
-                    __global int16_t* output,
-                    size_t width, size_t height,
-                    uint16_t threshold_lower,
-                    uint16_t threshold_upper) {
+__kernel void nonMax(__global int8* input_phase,
+                    __global int16* input_magnitude,
+                    __global int8* output,
+                    int width, int height,
+                    int threshold_lower,
+                    int threshold_upper) {
 
+   const int x = get_global_id(0);
+   const int y = get_global_id(1);
 
+   output[y*width + x] = y;
 
 }
