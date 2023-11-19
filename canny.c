@@ -36,6 +36,7 @@ typedef struct {
     cl_kernel kernel_sobel;
     cl_kernel kernel_PnM;
     cl_kernel kernel_nonMax;
+    size_t time_res;
 } OpenCLObjects;
 
 typedef struct {
@@ -64,147 +65,6 @@ idx(size_t x, size_t y, size_t width, size_t height, int xoff, int yoff) {
     if ((yoff > 0 && y < height - yoff) || (yoff < 0 && y >= (-yoff)))
         resy += yoff;
     return resy * width + resx;
-}
-
-void
-sobel3x3(
-    const uint8_t *restrict in, size_t width, size_t height,
-    int16_t *restrict output_x, int16_t *restrict output_y) {
-    // LOOP 1.1
-    for (size_t y = 0; y < height; y++) {
-        // LOOP 1.2
-        for (size_t x = 0; x < width; x++) {
-            size_t gid = y * width + x;
-
-            /* 3x3 sobel filter, first in x direction */
-            output_x[gid] = (-1) * in[idx(x, y, width, height, -1, -1)] +
-                            1 * in[idx(x, y, width, height, 1, -1)] +
-                            (-2) * in[idx(x, y, width, height, -1, 0)] +
-                            2 * in[idx(x, y, width, height, 1, 0)] +
-                            (-1) * in[idx(x, y, width, height, -1, 1)] +
-                            1 * in[idx(x, y, width, height, 1, 1)];
-
-            /* 3x3 sobel filter, in y direction */
-            output_y[gid] = (-1) * in[idx(x, y, width, height, -1, -1)] +
-                            1 * in[idx(x, y, width, height, -1, 1)] +
-                            (-2) * in[idx(x, y, width, height, 0, -1)] +
-                            2 * in[idx(x, y, width, height, 0, 1)] +
-                            (-1) * in[idx(x, y, width, height, 1, -1)] +
-                            1 * in[idx(x, y, width, height, 1, 1)];
-        }
-    }
-}
-
-void
-phaseAndMagnitude(
-    const int16_t *restrict in_x, const int16_t *restrict in_y, size_t width,
-    size_t height, uint8_t *restrict phase_out,
-    uint16_t *restrict magnitude_out) {
-    // LOOP 2.1
-    #pragma omp parallel for collapse(2)
-    for (size_t y = 0; y < height; y++) {
-        // LOOP 2.2
-        for (size_t x = 0; x < width; x++) {
-            size_t gid = y * width + x;
-
-            // Output in range -PI:PI
-            float angle = atan2f(in_y[gid], in_x[gid]);
-
-            // Shift range -1:1
-            angle /= PI;
-
-            // Shift range -127.5:127.5
-            angle *= 127.5;
-
-            // Shift range 0.5:255.5
-            angle += (127.5 + 0.5);
-
-            // Downcasting truncates angle to range 0:255
-            phase_out[gid] = (uint8_t)angle;
-
-            magnitude_out[gid] = abs(in_x[gid]) + abs(in_y[gid]);
-        }
-    }
-}
-
-void
-nonMaxSuppression(
-    const uint16_t *restrict magnitude, const uint8_t *restrict phase,
-    size_t width, size_t height, int16_t threshold_lower,
-    uint16_t threshold_upper, uint8_t *restrict out) {
-    // LOOP 3.1
-    #pragma omp parallel for collapse(2)
-    for (size_t y = 0; y < height; y++) {
-        // LOOP 3.2
-        for (size_t x = 0; x < width; x++) {
-            size_t gid = y * width + x;
-
-            uint8_t sobel_angle = phase[gid];
-
-            if (sobel_angle > 127) {
-                sobel_angle -= 128;
-            }
-
-            int sobel_orientation = 0;
-
-            if (sobel_angle < 16 || sobel_angle >= (7 * 16)) {
-                sobel_orientation = 2;
-            } else if (sobel_angle >= 16 && sobel_angle < 16 * 3) {
-                sobel_orientation = 1;
-            } else if (sobel_angle >= 16 * 3 && sobel_angle < 16 * 5) {
-                sobel_orientation = 0;
-            } else if (sobel_angle > 16 * 5 && sobel_angle <= 16 * 7) {
-                sobel_orientation = 3;
-            }
-
-            uint16_t sobel_magnitude = magnitude[gid];
-            /* Non-maximum suppression
-             * Pick out the two neighbours that are perpendicular to the
-             * current edge pixel */
-            uint16_t neighbour_max = 0;
-            uint16_t neighbour_max2 = 0;
-            switch (sobel_orientation) {
-                case 0:
-                    neighbour_max =
-                        magnitude[idx(x, y, width, height, 0, -1)];
-                    neighbour_max2 =
-                        magnitude[idx(x, y, width, height, 0, 1)];
-                    break;
-                case 1:
-                    neighbour_max =
-                        magnitude[idx(x, y, width, height, -1, -1)];
-                    neighbour_max2 =
-                        magnitude[idx(x, y, width, height, 1, 1)];
-                    break;
-                case 2:
-                    neighbour_max =
-                        magnitude[idx(x, y, width, height, -1, 0)];
-                    neighbour_max2 =
-                        magnitude[idx(x, y, width, height, 1, 0)];
-                    break;
-                case 3:
-                default:
-                    neighbour_max =
-                        magnitude[idx(x, y, width, height, 1, -1)];
-                    neighbour_max2 =
-                        magnitude[idx(x, y, width, height, -1, 1)];
-                    break;
-            }
-            // Suppress the pixel here
-            if ((sobel_magnitude < neighbour_max) ||
-                (sobel_magnitude < neighbour_max2)) {
-                sobel_magnitude = 0;
-            }
-
-            /* Double thresholding */
-            // Marks YES pixels with 255, NO pixels with 0 and MAYBE pixels
-            // with 127
-            uint8_t t = 127;
-            if (sobel_magnitude > threshold_upper) t = 255;
-            if (sobel_magnitude <= threshold_lower) t = 0;
-            out[gid] = t;
-        }
-    }
 }
 
 void
@@ -316,11 +176,11 @@ cannyEdgeDetection(
     size_t datasize = sizeof(uint8_t) * width * height;
 
     // Write input array A to the device buffer bufferA
-    status = clEnqueueWriteBuffer(ocl->cmdQueue, ocl->buf_input, CL_FALSE, 
+    status = clEnqueueWriteBuffer(ocl->cmdQueue, ocl->buf_input, CL_TRUE, 
         0, datasize, input, 0, NULL, &timing_event);
-    printf("Write input to buffer status: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("Write input to buffer status: %s\n", clErrorString(status));
 
-    execute_time = getStartEndTime(timing_event)/1000.0;
+    execute_time = (getStartEndTime(timing_event) * ocl->time_res) / 1000000.0;
     // Time resolution for my device is 1000ns = 1 us. Convert from us to ms to display
     printf("Time taken for writing input buffer to device: %f ms\n", execute_time);
 
@@ -329,71 +189,55 @@ cannyEdgeDetection(
     ///////////////////////// Sobel /////////////////////////
     status = clEnqueueNDRangeKernel(ocl->cmdQueue, ocl->kernel_sobel, 2, NULL,
         globalWorkSize, NULL, 0, NULL, &timing_event);
-    printf("sobel kernel status: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("sobel kernel status: %s\n", clErrorString(status));
 
     // Wait for work items to finish
     clFinish(ocl->cmdQueue);
 
-    execute_time = getStartEndTime(timing_event)/1000.0;
-    // Time resolution for my device is 1000ns = 1 us. Convert from us to ms to display
-    printf("Time for executing sobel kernel: %f ms\n", execute_time);
+    times[0] = getStartEndTime(timing_event) * ocl->time_res; // Multiply by time_resolution to get ns
+    //printf("Time for executing sobel kernel: %f ms\n", execute_time);
 
 
     ///////////////////////// Phase and magnitude /////////////////////////
     status = clEnqueueNDRangeKernel(ocl->cmdQueue, ocl->kernel_PnM, 2, NULL,
         globalWorkSize, NULL, 0, NULL, &timing_event);
-    printf("phaseAndMagnitude kernel status: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("phaseAndMagnitude kernel status: %s\n", clErrorString(status));
 
     // Wait for work items to finish
     clFinish(ocl->cmdQueue);
 
-    execute_time = getStartEndTime(timing_event)/1000.0;
-    // Time resolution for my device is 1000ns = 1 us. Convert from us to ms to display
-    printf("Time for executing phaseAndMagnitude kernel: %f ms\n", execute_time);
+    times[1] = getStartEndTime(timing_event) * ocl->time_res; // Multiply by time_resolution to get ns
+    //printf("Time for executing phaseAndMagnitude kernel: %f ms\n", execute_time);
 
 
     ///////////////////////// NONMAX /////////////////////////
     status = clEnqueueNDRangeKernel(ocl->cmdQueue, ocl->kernel_nonMax, 2, NULL,
         globalWorkSize, NULL, 0, NULL, &timing_event);
-    printf("nonMax kernel status: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("nonMax kernel status: %s\n", clErrorString(status));
 
     // Wait for work items to finish
     clFinish(ocl->cmdQueue);
 
-    execute_time = getStartEndTime(timing_event)/1000.0;
-    // Time resolution for my device is 1000ns = 1 us. Convert from us to ms to display
-    printf("Time for executing nonMax kernel: %f ms\n", execute_time);
-
+    times[2] = getStartEndTime(timing_event) * ocl->time_res; // Multiply by time_resolution to get ns
+    //printf("Time for executing nonMax kernel: %f ms\n", execute_time);
+    
 
     // Read the device output buffer to the host output array
     status = clEnqueueReadBuffer(ocl->cmdQueue, ocl->buf_output, CL_TRUE, 0,
         datasize, output, 0, NULL, &timing_event);
-    printf("Read output from buffer status: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("Read output from buffer status: %s\n", clErrorString(status));
     
-    execute_time = getStartEndTime(timing_event)/1000.0;
+    execute_time = (getStartEndTime(timing_event) * ocl->time_res) / 1000000.0;
     // Time resolution for my device is 1000ns = 1 us. Convert from us to ms to display
     printf("Time taken for reading output buffer from device: %f ms\n", execute_time);
 
     // OPENCL DONE
 
 
-
-    // Canny edge detection algorithm consists of the following functions:
-    times[0] = gettimemono_ns();
-    sobel3x3(input, width, height, sobel_x, sobel_y);
-
-    times[1] = gettimemono_ns();
-    phaseAndMagnitude(sobel_x, sobel_y, width, height, phase, magnitude);
-
-    times[2] = gettimemono_ns();
-    //nonMaxSuppression(
-    //    magnitude, phase, width, height, threshold_lower, threshold_upper,
-    //    output);
-
     times[3] = gettimemono_ns();
-    //edgeTracing(output, width, height);  // modifies output in-place
-
+    edgeTracing(output, width, height);  // modifies output in-place
     times[4] = gettimemono_ns();
+
     // Release intermediate arrays
     free(sobel_x);
     free(sobel_y);
@@ -401,8 +245,11 @@ cannyEdgeDetection(
     free(magnitude);
 
     for (int i = 0; i < 4; i++) {
-        runtimes[i] = times[i + 1] - times[i];
-        runtimes[i] /= 1000000.0;  // Convert ns to ms
+        runtimes[i] = times[i] / 1000000.0; // Convert ns to ms
+        // special case for edgeTracing as it is not read from opencl API
+        if (i == 3) {
+            runtimes[i] = (times[4] - times[3]) / 1000000.0;
+        }
     }
 }
 
@@ -420,7 +267,7 @@ init(size_t width, size_t height, uint16_t threshold_lower,
     cl_uint numPlatforms = 0;
     status = clGetPlatformIDs(0, NULL, &numPlatforms);
  
-    printf("clGetPlatformIDs: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("clGetPlatformIDs: %s\n", clErrorString(status));
 
     // Allocate enough space for each platform
     cl_platform_id *platforms = NULL;
@@ -430,14 +277,14 @@ init(size_t width, size_t height, uint16_t threshold_lower,
     // Fill in the platforms
     status = clGetPlatformIDs(numPlatforms, platforms, NULL);
 
-    printf("clGetPlatformIDs: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("clGetPlatformIDs: %s\n", clErrorString(status));
 
     // Retrieve the number of devices
     cl_uint numDevices = 0;
     status = clGetDeviceIDs(platforms[0], CL_DEVICE_TYPE_ALL, 0, 
         NULL, &numDevices);
 
-    printf("clGetDeviceIDs: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("clGetDeviceIDs: %s\n", clErrorString(status));
 
     // Allocate enough space for each device
     cl_device_id *devices;
@@ -448,43 +295,44 @@ init(size_t width, size_t height, uint16_t threshold_lower,
     status = clGetDeviceIDs(platforms[0], CL_DEVICE_TYPE_ALL,        
         numDevices, devices, NULL);
 
-    printf("clGetDeviceIDs: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("clGetDeviceIDs: %s\n", clErrorString(status));
 
     size_t time_res;
     // Get time resolution for profiling
     clGetDeviceInfo(devices[0], CL_DEVICE_PROFILING_TIMER_RESOLUTION, sizeof(time_res), &time_res, NULL);
 
-    printf("Time resolution of device in ns: %lu \n", time_res);
+    // printf("Time resolution of device in ns: %lu \n", time_res);
+    ocl->time_res = time_res;
 
     // Create a context and associate it with the devices
     ocl->context= clCreateContext(NULL, numDevices, devices, NULL, 
         NULL, &status);
 
-    printf("clCreateContext: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("clCreateContext: %s\n", clErrorString(status));
 
     // Create a command queue with profiling enabled and associate it with the device
     ocl->cmdQueue = clCreateCommandQueue(ocl->context, devices[0], CL_QUEUE_PROFILING_ENABLE,
         &status);
 
-    printf("clCreateCommandQueue: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("clCreateCommandQueue: %s\n", clErrorString(status));
 
     ocl->buf_input = clCreateBuffer(ocl->context, CL_MEM_READ_ONLY, image_size * sizeof(uint8_t), NULL, &status);
-    printf("clCreateBuffer: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("clCreateBuffer: %s\n", clErrorString(status));
     
     ocl->buf_sobel_x = clCreateBuffer(ocl->context, CL_MEM_READ_ONLY, image_size * sizeof(int16_t), NULL, &status);
-    printf("clCreateBuffer: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("clCreateBuffer: %s\n", clErrorString(status));
 
     ocl->buf_sobel_y = clCreateBuffer(ocl->context, CL_MEM_READ_ONLY, image_size * sizeof(int16_t), NULL, &status);
-    printf("clCreateBuffer: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("clCreateBuffer: %s\n", clErrorString(status));
 
     ocl->buf_phase = clCreateBuffer(ocl->context, CL_MEM_READ_ONLY, image_size * sizeof(uint8_t), NULL, &status);
-    printf("clCreateBuffer: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("clCreateBuffer: %s\n", clErrorString(status));
     
     ocl->buf_magnitude = clCreateBuffer(ocl->context, CL_MEM_READ_ONLY, image_size * sizeof(int16_t), NULL, &status);
-    printf("clCreateBuffer: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("clCreateBuffer: %s\n", clErrorString(status));
 
     ocl->buf_output = clCreateBuffer(ocl->context, CL_MEM_READ_ONLY, image_size * sizeof(uint8_t), NULL, &status);
-    printf("clCreateBuffer: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("clCreateBuffer: %s\n", clErrorString(status));
 
     const char* source = read_source("canny.cl");
 
@@ -492,69 +340,69 @@ init(size_t width, size_t height, uint16_t threshold_lower,
     ocl->program = clCreateProgramWithSource(ocl->context, 1, 
         (const char**)&source, NULL, &status);
 
-    printf("clCreateProgramWith Source: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("clCreateProgramWith Source: %s\n", clErrorString(status));
 
     // Build (compile) the program for the device
     status = clBuildProgram(ocl->program, numDevices, devices, 
         NULL, NULL, NULL);
 
-    printf("clBuildProgram: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("clBuildProgram: %s\n", clErrorString(status));
 
     char result[10000];
     size_t size;
     status = clGetProgramBuildInfo(ocl->program, devices[0], CL_PROGRAM_BUILD_LOG, sizeof(result), &result, &size);
-    printf("ProgramBuildLog status: %s\n", clErrorString(status));
-    printf("ProgramBuildLog: %s\n", result);
+    if(status != CL_SUCCESS) printf("ProgramBuildLog status: %s\n", clErrorString(status));
+    //printf("ProgramBuildLog: %s\n", result);
 
     // Create the vector addition kernel
     ocl->kernel_sobel = clCreateKernel(ocl->program, "sobel", &status);
-    printf("clCreateKernel: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("clCreateKernel: %s\n", clErrorString(status));
 
     ocl->kernel_PnM = clCreateKernel(ocl->program, "PnM", &status);
-    printf("clCreateKernel: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("clCreateKernel: %s\n", clErrorString(status));
 
     ocl->kernel_nonMax = clCreateKernel(ocl->program, "nonMax", &status);
-    printf("clCreateKernel: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("clCreateKernel: %s\n", clErrorString(status));
 
     // Associate the input and output buffers with the kernel
     status = clSetKernelArg(ocl->kernel_sobel, 0, sizeof(cl_mem), &ocl->buf_input);
-    printf("SetArgs: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("SetArgs: %s\n", clErrorString(status));
     status = clSetKernelArg(ocl->kernel_sobel, 1, sizeof(cl_mem), &ocl->buf_sobel_x);
-    printf("SetArgs: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("SetArgs: %s\n", clErrorString(status));
     status = clSetKernelArg(ocl->kernel_sobel, 2, sizeof(cl_mem), &ocl->buf_sobel_y);
-    printf("SetArgs: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("SetArgs: %s\n", clErrorString(status));
     status = clSetKernelArg(ocl->kernel_sobel, 3, sizeof(int), &width);
-    printf("SetArgs: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("SetArgs: %s\n", clErrorString(status));
     status = clSetKernelArg(ocl->kernel_sobel, 4, sizeof(int), &height);
-    printf("SetArgs: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("SetArgs: %s\n", clErrorString(status));
 
     status = clSetKernelArg(ocl->kernel_PnM, 0, sizeof(cl_mem), &ocl->buf_sobel_x);
-    printf("SetArgs: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("SetArgs: %s\n", clErrorString(status));
     status = clSetKernelArg(ocl->kernel_PnM, 1, sizeof(cl_mem), &ocl->buf_sobel_y);
-    printf("SetArgs: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("SetArgs: %s\n", clErrorString(status));
     status = clSetKernelArg(ocl->kernel_PnM, 2, sizeof(cl_mem), &ocl->buf_phase);
-    printf("SetArgs: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("SetArgs: %s\n", clErrorString(status));
     status = clSetKernelArg(ocl->kernel_PnM, 3, sizeof(cl_mem), &ocl->buf_magnitude);
-    printf("SetArgs: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("SetArgs: %s\n", clErrorString(status));
     status = clSetKernelArg(ocl->kernel_PnM, 4, sizeof(int), &width);
-    printf("SetArgs: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("SetArgs: %s\n", clErrorString(status));
     status = clSetKernelArg(ocl->kernel_PnM, 5, sizeof(int), &height);
-    printf("SetArgs: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("SetArgs: %s\n", clErrorString(status));
     
     status = clSetKernelArg(ocl->kernel_nonMax, 0, sizeof(cl_mem), &ocl->buf_phase);
-    printf("SetArgs: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("SetArgs: %s\n", clErrorString(status));
     status = clSetKernelArg(ocl->kernel_nonMax, 1, sizeof(cl_mem), &ocl->buf_magnitude);
-    printf("SetArgs: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("SetArgs: %s\n", clErrorString(status));
     status = clSetKernelArg(ocl->kernel_nonMax, 2, sizeof(cl_mem), &ocl->buf_output);
-    printf("SetArgs: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("SetArgs: %s\n", clErrorString(status));
     status = clSetKernelArg(ocl->kernel_nonMax, 3, sizeof(int), &width);
-    printf("SetArgs: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("SetArgs: %s\n", clErrorString(status));
     status = clSetKernelArg(ocl->kernel_nonMax, 4, sizeof(int), &height);
-    printf("SetArgs: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("SetArgs: %s\n", clErrorString(status));
     status = clSetKernelArg(ocl->kernel_nonMax, 5, sizeof(int), &threshold_lower);
-    printf("SetArgs: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("SetArgs: %s\n", clErrorString(status));
     status = clSetKernelArg(ocl->kernel_nonMax, 6, sizeof(int), &threshold_upper);
-    printf("SetArgs: %s\n", clErrorString(status));
+    if(status != CL_SUCCESS) printf("SetArgs: %s\n", clErrorString(status));
 
 }
 
