@@ -23,6 +23,8 @@ int previousFinishTime = 0;
 unsigned int frameNumber = 0;
 unsigned int seed = 0;
 
+int8_t first_iter = 1;
+
 typedef struct {
     cl_context context;
     cl_program program;
@@ -36,7 +38,6 @@ typedef struct {
     cl_kernel kernel_sobel;
     cl_kernel kernel_PnM;
     cl_kernel kernel_nonMax;
-    size_t time_res;
 } OpenCLObjects;
 
 typedef struct {
@@ -51,21 +52,9 @@ const coord_t neighbour_offsets[8] = {
 
 // ## You may add your own variables here ##
 
+// Used to store the opencl object handles
 OpenCLObjects ocl_obj;
 OpenCLObjects *ocl = &ocl_obj;
-
-// Utility function to convert 2d index with offset to linear index
-// Uses clamp-to-edge out-of-bounds handling
-size_t
-idx(size_t x, size_t y, size_t width, size_t height, int xoff, int yoff) {
-    size_t resx = x;
-    if ((xoff > 0 && x < width - xoff) || (xoff < 0 && x >= (-xoff)))
-        resx += xoff;
-    size_t resy = y;
-    if ((yoff > 0 && y < height - yoff) || (yoff < 0 && y >= (-yoff)))
-        resy += yoff;
-    return resy * width + resx;
-}
 
 void
 edgeTracing(uint8_t *restrict image, size_t width, size_t height) {
@@ -147,21 +136,6 @@ cannyEdgeDetection(
     uint16_t threshold_lower, uint16_t threshold_upper,
     uint8_t *restrict output, double *restrict runtimes) {
 
-    size_t image_size = width * height;
-
-    // Allocate arrays for intermediate results
-    int16_t *sobel_x = malloc(image_size * sizeof(int16_t));
-    assert(sobel_x);
-
-    int16_t *sobel_y = malloc(image_size * sizeof(int16_t));
-    assert(sobel_y);
-
-    uint8_t *phase = malloc(image_size * sizeof(uint8_t));
-    assert(phase);
-
-    uint16_t *magnitude = malloc(image_size * sizeof(uint16_t));
-    assert(magnitude);
-
     uint64_t times[5];
 
     // OPENCL EXECUTION
@@ -180,10 +154,11 @@ cannyEdgeDetection(
         0, datasize, input, 0, NULL, &timing_event);
     if(status != CL_SUCCESS) printf("Write input to buffer status: %s\n", clErrorString(status));
 
-    execute_time = (getStartEndTime(timing_event) * ocl->time_res) / 1000000.0;
-    // Time resolution for my device is 1000ns = 1 us. Convert from us to ms to display
-    printf("Time taken for writing input buffer to device: %f ms\n", execute_time);
-
+    if (first_iter) {
+        // Report buffer write time on first iteration
+        execute_time = getStartEndTime(timing_event) / 1000000.0;
+        printf("Time taken for writing input buffer to device: %f ms\n", execute_time);
+    }
 
     // RUN KERNELS
     ///////////////////////// Sobel /////////////////////////
@@ -194,8 +169,7 @@ cannyEdgeDetection(
     // Wait for work items to finish
     clFinish(ocl->cmdQueue);
 
-    times[0] = getStartEndTime(timing_event) * ocl->time_res; // Multiply by time_resolution to get ns
-    //printf("Time for executing sobel kernel: %f ms\n", execute_time);
+    times[0] = getStartEndTime(timing_event);
 
 
     ///////////////////////// Phase and magnitude /////////////////////////
@@ -206,8 +180,7 @@ cannyEdgeDetection(
     // Wait for work items to finish
     clFinish(ocl->cmdQueue);
 
-    times[1] = getStartEndTime(timing_event) * ocl->time_res; // Multiply by time_resolution to get ns
-    //printf("Time for executing phaseAndMagnitude kernel: %f ms\n", execute_time);
+    times[1] = getStartEndTime(timing_event);
 
 
     ///////////////////////// NONMAX /////////////////////////
@@ -218,31 +191,25 @@ cannyEdgeDetection(
     // Wait for work items to finish
     clFinish(ocl->cmdQueue);
 
-    times[2] = getStartEndTime(timing_event) * ocl->time_res; // Multiply by time_resolution to get ns
-    //printf("Time for executing nonMax kernel: %f ms\n", execute_time);
-    
+    times[2] = getStartEndTime(timing_event);
 
+    
     // Read the device output buffer to the host output array
     status = clEnqueueReadBuffer(ocl->cmdQueue, ocl->buf_output, CL_TRUE, 0,
         datasize, output, 0, NULL, &timing_event);
     if(status != CL_SUCCESS) printf("Read output from buffer status: %s\n", clErrorString(status));
     
-    execute_time = (getStartEndTime(timing_event) * ocl->time_res) / 1000000.0;
-    // Time resolution for my device is 1000ns = 1 us. Convert from us to ms to display
-    printf("Time taken for reading output buffer from device: %f ms\n", execute_time);
+    if (first_iter) {
+        execute_time = getStartEndTime(timing_event) / 1000000.0;
+        printf("Time taken for reading output buffer from device: %f ms\n", execute_time);
+        first_iter = 0;
+    }
 
     // OPENCL DONE
-
 
     times[3] = gettimemono_ns();
     edgeTracing(output, width, height);  // modifies output in-place
     times[4] = gettimemono_ns();
-
-    // Release intermediate arrays
-    free(sobel_x);
-    free(sobel_y);
-    free(phase);
-    free(magnitude);
 
     for (int i = 0; i < 4; i++) {
         runtimes[i] = times[i] / 1000000.0; // Convert ns to ms
@@ -301,8 +268,7 @@ init(size_t width, size_t height, uint16_t threshold_lower,
     // Get time resolution for profiling
     clGetDeviceInfo(devices[0], CL_DEVICE_PROFILING_TIMER_RESOLUTION, sizeof(time_res), &time_res, NULL);
 
-    // printf("Time resolution of device in ns: %lu \n", time_res);
-    ocl->time_res = time_res;
+    printf("Time resolution of device in ns: %lu \n", time_res);
 
     // Create a context and associate it with the devices
     ocl->context= clCreateContext(NULL, numDevices, devices, NULL, 
